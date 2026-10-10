@@ -1,9 +1,10 @@
 """FastAPI web application exposing REST APIs and modern web dashboard."""
 
 from pathlib import Path
+import os
+import logging
 from typing import Any, Dict, List, Optional
 from fastapi import FastAPI, HTTPException, Query, status
-from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
@@ -16,9 +17,9 @@ STATIC_DIR = Path(__file__).resolve().parent / "static"
 
 class AnalyzeRequest(BaseModel):
     """Payload for code analysis."""
-    source_code: str = Field(..., description="Python source code to analyze")
+    source_code: str = Field(..., min_length=1, max_length=50000, description="Python source code to analyze")
     request_ai: bool = Field(False, description="Flag indicating whether to trigger AI review")
-    filename: Optional[str] = Field("<web-input>", description="Optional filename identifier")
+    filename: Optional[str] = Field("<web-input>", max_length=255, description="Optional filename identifier")
     save: bool = Field(True, description="Whether to persist the review in SQLite history")
 
 
@@ -39,16 +40,20 @@ def create_app(service: Optional[BugDetectionService] = None) -> FastAPI:
         version="0.1.0",
     )
 
-    app.add_middleware(
-        CORSMiddleware,
-        allow_origins=["*"],
-        allow_credentials=True,
-        allow_methods=["*"],
-        allow_headers=["*"],
-    )
+    # Public demo protections are enabled through an environment variable.
+    public_demo_mode = os.getenv("PUBLIC_DEMO_MODE", "false").lower() in {
+        "1", "true", "yes"
+    }
 
     # Use provided service or default instance
     app_service = service or BugDetectionService()
+
+    def require_history_access() -> None:
+        if public_demo_mode:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="History is unavailable in public demo mode.",
+            )
 
     @app.get("/api/health", response_model=HealthResponse)
     def health_check() -> HealthResponse:
@@ -67,17 +72,24 @@ def create_app(service: Optional[BugDetectionService] = None) -> FastAPI:
         
         Guarantees that user source code is never executed.
         """
+        if public_demo_mode and payload.request_ai:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="AI review is disabled in public demo mode.",
+            )
+
         try:
             return app_service.analyze(
                 source_code=payload.source_code,
                 request_ai=payload.request_ai,
                 filename=payload.filename or "<web-input>",
-                save=payload.save,
+                save=False if public_demo_mode else payload.save,
             )
-        except Exception as err:
+        except Exception:
+            logging.exception("Code analysis failed")
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=f"Analysis failed: {err}",
+                detail="Analysis failed. Please try again.",
             )
 
     @app.get("/api/history", response_model=List[ReviewRecord])
@@ -88,19 +100,22 @@ def create_app(service: Optional[BugDetectionService] = None) -> FastAPI:
         code_hash: Optional[str] = Query(None),
     ) -> List[ReviewRecord]:
         """Fetch review history with pagination or optional search filters."""
+        require_history_access()
         try:
             if query or code_hash:
                 return app_service.search_history(query=query, code_hash=code_hash, limit=limit)
             return app_service.list_history(limit=limit, offset=offset)
-        except Exception as err:
+        except Exception:
+            logging.exception("History query failed")
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=f"Failed to query history: {err}",
+                detail="Unable to retrieve history.",
             )
 
     @app.get("/api/history/{review_id}", response_model=ReviewRecord)
     def get_history_detail(review_id: str) -> ReviewRecord:
         """Retrieve a specific review record by its ID."""
+        require_history_access()
         record = app_service.get_review(review_id)
         if not record:
             raise HTTPException(
@@ -112,6 +127,7 @@ def create_app(service: Optional[BugDetectionService] = None) -> FastAPI:
     @app.delete("/api/history/{review_id}")
     def delete_history_item(review_id: str) -> Dict[str, Any]:
         """Delete an individual review record."""
+        require_history_access()
         deleted = app_service.delete_review(review_id)
         if not deleted:
             raise HTTPException(
@@ -123,6 +139,7 @@ def create_app(service: Optional[BugDetectionService] = None) -> FastAPI:
     @app.post("/api/history/clear")
     def clear_history() -> Dict[str, Any]:
         """Explicitly clear all stored reviews."""
+        require_history_access()
         count = app_service.clear_history()
         return {"success": True, "cleared_count": count, "message": "History cleared."}
 
