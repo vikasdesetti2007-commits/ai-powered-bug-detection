@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AI-Powered Bug Detection System</title>
+  <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+
+  <!-- Navbar -->
+  <nav class="navbar">
+    <div class="brand">
+      <div class="brand-icon">⚡</div>
+      <div class="brand-title">AI-Powered Bug Detection System</div>
+    </div>
+    <div class="header-actions">
+      <span id="ai-status-pill" class="badge-pill pill-gray">AI: Checking...</span>
+      <span class="badge-pill pill-green">DB: SQLite</span>
+      <button id="btn-open-history" class="btn-secondary">📜 Review History</button>
+    </div>
+  </nav>
+
+  <!-- Main Grid -->
+  <main class="container">
+    
+    <!-- Code Input Panel -->
+    <section class="panel">
+      <div class="panel-header">
+        <span class="panel-title">Python Code Editor</span>
+        <div class="editor-controls">
+          <select id="demo-selector" class="demo-select">
+            <option value="">Load Demo Snippet...</option>
+            <option value="security">Security Vulnerabilities (eval / os.system)</option>
+            <option value="correctness">Correctness Bugs (mutable defaults / == None / div by 0)</option>
+            <option value="style">Style Issues (bare except / shadowed builtins)</option>
+            <option value="syntax">Syntax & Indentation Errors</option>
+            <option value="clean">Clean Python Code</option>
+          </select>
+          <button id="btn-clear-code" class="btn-secondary">Clear</button>
+        </div>
+      </div>
+      <div class="panel-body">
+        <div class="editor-wrapper">
+          <textarea id="code-input" placeholder="# Paste or type Python code here...&#10;def analyze_data(items=[]):&#10;    if items == None:&#10;        return 1 / 0&#10;    return len(items)" spellcheck="false"></textarea>
+        </div>
+        <div class="editor-footer">
+          <label class="ai-toggle">
+            <input type="checkbox" id="ai-toggle-checkbox">
+            <span>Enable AI Review (OpenAI)</span>
+          </label>
+          <button id="btn-analyze" class="btn-primary">
+            <span>Analyze Code</span> ➔
+          </button>
+        </div>
+      </div>
+    </section>
+
+    <!-- Findings & Results Panel -->
+    <section class="panel">
+      <div class="panel-header">
+        <span class="panel-title">Analysis & Findings</span>
+        <span id="timing-badge" class="badge-pill pill-gray" style="display: none;">0.0 ms</span>
+      </div>
+      <div class="panel-body" id="results-body">
+        
+        <!-- Empty State -->
+        <div id="empty-state" class="empty-state">
+          <div style="font-size: 2.5rem; opacity: 0.6;">🔍</div>
+          <p>Submit Python code on the left to inspect syntax errors and static bugs.</p>
+        </div>
+
+        <!-- Loading State -->
+        <div id="loading-state" class="empty-state" style="display: none;">
+          <div class="spinner"></div>
+          <p id="loading-text">Performing AST static analysis...</p>
+        </div>
+
+        <!-- Content State (Initially hidden) -->
+        <div id="content-state" style="display: none; display: flex; flex-direction: column; gap: 1rem;">
+          
+          <!-- Syntax Error Callout -->
+          <div id="syntax-error-box" class="syntax-banner" style="display: none;">
+            <div class="syntax-banner-header">
+              <span>⚠️ Syntax Error Detected</span>
+              <span id="syntax-err-loc" style="font-size: 0.8rem; font-weight: normal;"></span>
+            </div>
+            <div id="syntax-err-msg" style="font-size: 0.85rem; margin-bottom: 0.5rem;"></div>
+            <pre id="syntax-err-diagram" class="diagram-box"></pre>
+          </div>
+
+          <!-- Metrics Row -->
+          <div id="metrics-row" class="metrics-grid">
+            <div class="metric-card">
+              <div class="metric-label">Total</div>
+              <div id="metric-total" class="metric-value">0</div>
+            </div>
+            <div class="metric-card">
+              <div class="metric-label">Errors</div>
+              <div id="metric-errors" class="metric-value val-error">0</div>
+            </div>
+            <div class="metric-card">
+              <div class="metric-label">Warnings</div>
+              <div id="metric-warnings" class="metric-value val-warning">0</div>
+            </div>
+            <div class="metric-card">
+              <div class="metric-label">Info</div>
+              <div id="metric-info" class="metric-value val-info">0</div>
+            </div>
+            <div id="metric-ai-box" class="metric-card" style="display: none;">
+              <div class="metric-label">AI Score</div>
+              <div id="metric-ai-score" class="metric-value val-score">--</div>
+            </div>
+          </div>
+
+          <!-- Filter Tabs -->
+          <div class="filter-tabs">
+            <button class="tab-btn active" data-filter="ALL">All Findings (<span id="count-all">0</span>)</button>
+            <button class="tab-btn" data-filter="ERROR">Errors (<span id="count-err">0</span>)</button>
+            <button class="tab-btn" data-filter="WARNING">Warnings (<span id="count-warn">0</span>)</button>
+            <button class="tab-btn" data-filter="INFO">Info (<span id="count-info">0</span>)</button>
+          </div>
+
+          <!-- Static Findings List -->
+          <div id="findings-container" class="findings-list"></div>
+
+          <!-- AI Review Section -->
+          <div id="ai-review-section" class="ai-card" style="display: none;">
+            <div class="ai-header">
+              <span>🤖 AI Code Review</span>
+              <span id="ai-model-tag" style="font-size: 0.75rem; color: var(--text-muted);">gpt-4o-mini</span>
+            </div>
+            <div id="ai-summary-text" class="ai-summary"></div>
+            <div id="ai-findings-container" style="display: flex; flex-direction: column; gap: 0.5rem;"></div>
+            <div id="ai-refactor-box" style="display: none;">
+              <div style="font-size: 0.8rem; font-weight: 600; margin-bottom: 0.25rem;">Suggested Refactored Code:</div>
+              <pre id="ai-refactor-code" class="diagram-box" style="color: #a7f3d0; max-height: 250px; overflow-y: auto;"></pre>
+            </div>
+          </div>
+
+        </div>
+
+      </div>
+    </section>
+
+  </main>
+
+  <!-- Review History Modal -->
+  <div id="history-modal" class="modal-overlay">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h3 style="font-size: 1.1rem; font-weight: 600;">Review History</h3>
+        <button id="btn-close-history" class="btn-secondary">✕</button>
+      </div>
+      <div class="modal-body" id="history-list">
+        <div style="text-align: center; color: var(--text-muted); padding: 2rem;">Loading history...</div>
+      </div>
+      <div class="modal-footer">
+        <button id="btn-clear-history" class="btn-danger">Clear All History</button>
+        <button id="btn-refresh-history" class="btn-secondary">Refresh</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="/static/js/app.js"></script>
+</body>
+</html>
