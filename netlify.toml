@@ -1,0 +1,7 @@
+[build]
+  publish = "bug_detector/web/static"
+
+[[redirects]]
+  from = "/static/*"
+  to = "/static/:splat"
+  status = 200
